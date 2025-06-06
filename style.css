@@ -1,0 +1,69 @@
+body {
+    font-family: sans-serif;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 100vh;
+    background-color: #f0f0f0;
+    margin: 0;
+}
+
+#game-container {
+    display: flex;
+    align-items: flex-start; /* Align items to the top */
+    gap: 20px; /* Space between chessboard and game info */
+}
+
+#chessboard {
+    width: 400px; /* Adjust as needed */
+    height: 400px; /* Adjust as needed */
+    display: grid;
+    grid-template-columns: repeat(8, 1fr);
+    grid-template-rows: repeat(8, 1fr);
+    border: 2px solid #333;
+}
+
+.square {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    font-size: 24px; /* Adjust for piece size */
+    box-sizing: border-box; /* Important for borders within grid */
+}
+
+.light {
+    background-color: #f0d9b5;
+}
+
+.dark {
+    background-color: #b58863;
+}
+
+#game-info {
+    border: 1px solid #ccc;
+    padding: 15px;
+    background-color: #fff;
+    min-width: 200px; /* Ensure it has some width */
+}
+
+#game-info p {
+    margin: 0 0 10px 0;
+}
+
+#game-info button {
+    padding: 8px 15px;
+    cursor: pointer;
+}
+
+/* Basic piece styling (will be expanded) */
+.piece {
+    cursor: pointer;
+}
+
+/* Add to existing style.css */
+.selected-square {
+    background-color: #a0e0a0 !important; /* A light green, !important to override light/dark */
+    border: 2px dashed #339933;
+}
