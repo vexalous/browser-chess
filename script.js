@@ -8,6 +8,8 @@ document.addEventListener('DOMContentLoaded', () => {
     let currentPlayer = 'white'; // or 'black'
     let selectedPiece = null; // Now stores { code: 'wP', row: r, col: c }
     let gameActive = true;
+    let hasMoved = { wK: false, wRa: false, wRh: false, bK: false, bRa: false, bRh: false };
+    let enPassantTargetSquare = null;
 
     const initialBoardSetup = [
         ['bR', 'bN', 'bB', 'bQ', 'bK', 'bB', 'bN', 'bR'], // Black pieces
@@ -26,6 +28,9 @@ document.addEventListener('DOMContentLoaded', () => {
         currentPlayer = 'white';
         selectedPiece = null;
         gameActive = true;
+        // Reset hasMoved flags
+        hasMoved = { wK: false, wRa: false, wRh: false, bK: false, bRa: false, bRh: false };
+        enPassantTargetSquare = null;
         updateTurnInfo();
         messageArea.textContent = '';
     }
@@ -84,84 +89,136 @@ function onSquareClick(row, col) {
         return;
     }
 
-    const clickedPieceCode = board[row][col];
+    const enPassantSquareValidForThisTurn = enPassantTargetSquare; // Capture EP target from previous turn
 
     if (selectedPiece) {
-        if (selectedPiece.row === row && selectedPiece.col === col) {
-            selectedPiece = null;
-            messageArea.textContent = '';
-            renderBoard();
-            return;
-        }
+        const pieceToMove = selectedPiece.code;
+        const fromRow = selectedPiece.row;
+        const fromCol = selectedPiece.col;
+        const playerMakingTheMove = currentPlayer;
 
-        if (isValidMove(selectedPiece.code, selectedPiece.row, selectedPiece.col, row, col)) {
-            const originalBoardState = JSON.parse(JSON.stringify(board)); // For reverting if self-check
-            const pieceToMove = selectedPiece.code;
-            const fromRow = selectedPiece.row;
-            const fromCol = selectedPiece.col;
+        // Temporarily set the global for isValidPawnMove to use the correct EP square for this turn's validation
+        // This is a bit of a hack. A parameter would be cleaner.
+        const actualGlobalEP = window.enPassantTargetSquare; // backup if needed
+        window.enPassantTargetSquare = enPassantSquareValidForThisTurn;
 
-            // Simulate the move on the main board
+        if (isValidMove(pieceToMove, fromRow, fromCol, row, col)) {
+            window.enPassantTargetSquare = actualGlobalEP; // Restore global immediately after use by isValidMove
+
+            const originalBoardState = JSON.parse(JSON.stringify(board));
+            const originalHasMoved = JSON.parse(JSON.stringify(hasMoved));
+            const originalGlobalEPSquare = enPassantTargetSquare; // Save the EP square that might be set for *next* turn
+
+            let isEnPassantCapture = false;
+            // let capturedPawnActualRow = -1; // Not needed, can use fromRow directly
+
+            const pieceType = pieceToMove.substring(1); // Moved this up for EP check and general use
+            const pieceColorChar = pieceToMove.charAt(0); // Moved this up
+
+            if (pieceType === 'P' &&
+                enPassantSquareValidForThisTurn && // Must be a valid EP target from previous turn
+                row === enPassantSquareValidForThisTurn.row &&
+                col === enPassantSquareValidForThisTurn.col &&
+                board[row][col] === '') { // Target square must be empty for EP
+                isEnPassantCapture = true;
+                board[fromRow][col] = ''; // Remove the actual pawn (same rank as attacker, target column)
+            }
+
             board[row][col] = pieceToMove;
             board[fromRow][fromCol] = '';
 
-            const playerMakingTheMove = currentPlayer;
+            // Castling logic
+            // let isCastlingMove = false; // Not needed for this version of the logic
+            if (pieceType === 'K' && Math.abs(col - fromCol) === 2) {
+                // isCastlingMove = true;
+                const rookStartCol = (col > fromCol) ? 7 : 0;
+                const rookEndCol = (col > fromCol) ? col - 1 : col + 1;
+                board[row][rookEndCol] = pieceColorChar + 'R';
+                board[row][rookStartCol] = '';
+            }
 
-            // Check if this move puts THE MOVING PLAYER'S king in check
+            // Update hasMoved
+            if (pieceType === 'K') {
+                hasMoved[pieceColorChar + 'K'] = true;
+            } else if (pieceType === 'R') {
+                if (fromRow === (pieceColorChar === 'w' ? 7 : 0)) { // Rook on starting rank
+                    if (fromCol === 0) hasMoved[pieceColorChar + 'Ra'] = true;
+                    else if (fromCol === 7) hasMoved[pieceColorChar + 'Rh'] = true;
+                }
+            }
+
+
             if (isKingInCheck(playerMakingTheMove)) {
-                board = originalBoardState; // Revert move
+                board = originalBoardState;
+                hasMoved = originalHasMoved;
+                enPassantTargetSquare = originalGlobalEPSquare; // Restore EP square for next turn if move failed
+                // Note: If isEnPassantCapture was true, the removed pawn is restored by originalBoardState.
                 messageArea.textContent = 'Invalid move: Your king would be in check.';
-                // selectedPiece remains, allowing the player to try a different move
             } else {
                 // Move is legal
-                selectedPiece = null; // Deselect piece
-                switchPlayer(); // currentPlayer is now the other player
+                // Set enPassantTargetSquare for the NEXT turn
+                if (pieceType === 'P' && Math.abs(row - fromRow) === 2) {
+                    enPassantTargetSquare = { row: (fromRow + row) / 2, col: fromCol };
+                } else {
+                    enPassantTargetSquare = null;
+                }
 
-                // Check game status for the new current player
+                // Pawn promotion
+                if (pieceType === 'P') {
+                    if ((pieceColorChar === 'w' && row === 0) || (pieceColorChar === 'b' && row === 7)) {
+                        const promotedPieceCode = pieceColorChar + 'Q';
+                        board[row][col] = promotedPieceCode;
+                    }
+                }
+
+                selectedPiece = null;
+                switchPlayer();
+                // Check game status
                 const legalMoves = getAllLegalMoves(currentPlayer);
                 const kingInCheckStatus = isKingInCheck(currentPlayer);
-
+                // ... checkmate/stalemate/check messages ...
                 if (kingInCheckStatus && legalMoves.length === 0) {
                     messageArea.textContent = `Checkmate! ${playerMakingTheMove} wins.`;
                     gameActive = false;
-                } else if (!kingInCheckStatus && legalMoves.length === 0) {
+                }
+                else if (!kingInCheckStatus && legalMoves.length === 0) {
                     messageArea.textContent = "Stalemate! It's a draw.";
                     gameActive = false;
-                } else if (kingInCheckStatus) {
-                    messageArea.textContent = 'Check!';
-                } else {
-                    messageArea.textContent = ''; // Clear previous messages like 'Check!'
                 }
+                else if (kingInCheckStatus) {
+                    messageArea.textContent = 'Check!';
+                }
+                else { if (messageArea.textContent !== 'Check!') { messageArea.textContent = '';} }
             }
         } else {
-            // Invalid move or trying to select another of the current player's pieces
-            const targetPieceOwner = clickedPieceCode ? clickedPieceCode.charAt(0) : null;
+             window.enPassantTargetSquare = actualGlobalEP; // Restore global if isValidMove failed
+            // ... (invalid move logic copied from previous state)
+            const targetPieceOwner = board[row][col] ? board[row][col].charAt(0) : null;
             const selectedPieceOwner = selectedPiece.code.charAt(0);
 
-            if (clickedPieceCode && targetPieceOwner === selectedPieceOwner) {
-                // Clicked another of the current player's pieces - switch selection
-                selectedPiece = { code: clickedPieceCode, row: row, col: col };
-                messageArea.textContent = `Selected ${getPieceSymbol(clickedPieceCode)}. Click a destination square.`;
+            if (board[row][col] && targetPieceOwner === selectedPieceOwner) {
+                selectedPiece = { code: board[row][col], row: row, col: col };
+                messageArea.textContent = `Selected ${getPieceSymbol(board[row][col])}`;
             } else {
-                // Invalid move
                 messageArea.textContent = 'Invalid move.';
-                selectedPiece = null; // Deselect on invalid move attempt
+                selectedPiece = null;
             }
         }
-    } else if (clickedPieceCode) {
-        // No piece selected, try to select one
-        const pieceOwner = clickedPieceCode.charAt(0); // 'w' or 'b'
+    } else if (board[row][col]) {
+        // ... (selecting a piece logic copied from previous state)
+        const pieceOwner = board[row][col].charAt(0);
         if ((currentPlayer === 'white' && pieceOwner === 'w') || (currentPlayer === 'black' && pieceOwner === 'b')) {
-            selectedPiece = { code: clickedPieceCode, row: row, col: col };
-            messageArea.textContent = `Selected ${getPieceSymbol(clickedPieceCode)}. Click a destination square.`;
+            selectedPiece = { code: board[row][col], row: row, col: col };
+            messageArea.textContent = `Selected ${getPieceSymbol(board[row][col])}. Click a destination square.`;
         } else {
             messageArea.textContent = "Cannot select opponent's piece.";
         }
     }
-    renderBoard(); // Re-render the board after any action
+    renderBoard();
 }
 
-// isValidMove and individual piece move functions (Pawn, Rook, Knight, Bishop, Queen, King) remain the same for now
-// ... (isValidMove, isValidPawnMove, isValidRookMove, etc. as they are) ...
+
+// ... (isValidMove, isValidRookMove, isValidKnightMove, isValidBishopMove, isValidQueenMove functions should remain)
 function isValidMove(pieceCode, startRow, startCol, endRow, endCol) {
         const pieceType = pieceCode.substring(1); // P, R, N, B, Q, K
         const pieceColor = pieceCode.charAt(0); // 'w' or 'b'
@@ -221,11 +278,21 @@ function isValidMove(pieceCode, startRow, startCol, endRow, endCol) {
         if (endRow === oneStep && Math.abs(endCol - startCol) === 1) {
             const targetPieceCode = board[endRow][endCol];
             if (targetPieceCode && targetPieceCode.charAt(0) !== color) {
-                return true; // Capture an opponent's piece
+                return true; // Normal capture
             }
-            // En passant will be handled here later
+            // En Passant Capture
+            // Uses the global enPassantTargetSquare which should be set to enPassantSquareValidForThisTurn by caller
+            if (!targetPieceCode && // Target square must be empty for en passant
+                window.enPassantTargetSquare &&  // Check the (potentially temporarily set) global
+                endRow === window.enPassantTargetSquare.row &&
+                endCol === window.enPassantTargetSquare.col) {
+                // Check if capturing pawn is on the correct rank
+                const correctRankForEnPassant = (color === 'w') ? 3 : 4;
+                if (startRow === correctRankForEnPassant) {
+                    return true;
+                }
+            }
         }
-
         return false;
     }
 
@@ -307,14 +374,52 @@ function isValidMove(pieceCode, startRow, startCol, endRow, endCol) {
         const rowDiff = Math.abs(endRow - startRow);
         const colDiff = Math.abs(endCol - startCol);
 
-        // King moves one square in any direction
-        if (rowDiff <= 1 && colDiff <= 1 && (rowDiff + colDiff > 0)) { // (rowDiff + colDiff > 0) ensures it actually moved
-            // Basic move is valid.
-            // Later, add check: !isSquareUnderAttack(endRow, endCol, opponentColor)
-            return true;
+        // Standard one-square King move
+        if (rowDiff <= 1 && colDiff <= 1 && (rowDiff + colDiff > 0)) {
+            return true; // Self-check for this move is handled in onSquareClick
         }
 
-        // Castling will be handled here later as a special type of king move.
+        // Castling Logic
+        if (rowDiff === 0 && colDiff === 2) { // King moves two squares horizontally
+            if (isKingInCheck(color)) return false; // Cannot castle if in check
+
+            const kingPieceCode = color + 'K';
+            if (hasMoved[kingPieceCode]) return false;
+
+            let rookCol, rookDestCol, rookPieceCodeSuffix; // Changed rookPieceCode to rookPieceCodeSuffix
+            let squaresToClear = []; // Not used in current logic, but good for concept
+
+            if (endCol > startCol) { // Kingside castle
+                rookCol = 7;
+                // rookDestCol = startCol + 1; // Rook moves next to king (not needed for validation here)
+                // squaresToClear = [startCol + 1, startCol + 2]; // Path for king
+                rookPieceCodeSuffix = 'Rh';
+            } else { // Queenside castle
+                rookCol = 0;
+                // rookDestCol = startCol - 1; // Rook moves next to king (not needed for validation here)
+                // squaresToClear = [startCol - 1, startCol - 2, startCol - 3]; // Path for king
+                rookPieceCodeSuffix = 'Ra';
+            }
+
+            const fullRookCode = color + rookPieceCodeSuffix;
+            if (hasMoved[fullRookCode]) return false;
+
+            // Check if squares between King and Rook are empty for King's path
+            const step = (endCol > startCol) ? 1 : -1;
+            for (let c = startCol + step; c !== endCol; c += step) {
+                if (board[startRow][c] !== '') return false; // Path not clear for King
+                if (isSquareUnderAttack(startRow, c, (color === 'w' ? 'black' : 'white'))) return false; // King passes through attack
+            }
+            // Also check the destination square for the king (this is vital)
+             if (isSquareUnderAttack(endRow, endCol, (color === 'w' ? 'black' : 'white'))) return false;
+
+
+            // Check if the actual rook piece is on the board at its starting position
+            if (board[startRow][rookCol] !== color + 'R') return false;
+
+
+            return true;
+        }
 
         return false;
     }
